@@ -10,6 +10,12 @@ _Another thank-you to the team behind [MiniZ](https://github.com/richgel999/mini
 
 ---
 
+## Installation
+
+You should NOT install this software by itself- the patcher is needed in order for the Open Shop Channel software suite to function properly.
+
+Visit https://oscwii.org for download links and installation instructions.
+
 ## Purpose
 
 This application downloads & installs the application which the user has selected using the Open Shop Channel interface.
