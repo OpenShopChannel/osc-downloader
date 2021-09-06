@@ -376,8 +376,8 @@ int main(int argc, char **argv) {
 	// Set fileSize to returned value of getRemoteFileSize
 	fileSize = lenRes;
 
-	// Open/create __oscTempzip__.zip at the SD card root for writing
-	FILE * f = fopen("__oscTempzip__.zip", "wb");
+	// Open/create /openshopchannel/temp.zip at the SD card root for writing
+	FILE * f = fopen("/openshopchannel/temp.zip", "wb");
 	if (f == NULL) {
 		// Note- usually, errorMessage and errorCode are set in functions.
 		// They are set here, independently of a function, this error-handling
@@ -402,15 +402,21 @@ int main(int argc, char **argv) {
 	}
 	free(downloadProgress);
 
-	// Close file handler for __oscTempzip__.zip
+	// Close file handler for /openshopchannel/temp.zip
 	fclose(f);
 
-	// Unzip __oscTempzip__.zip
+	// Unzip /openshopchannel/temp.zip
 	// ( See the following URL for details & examples on how to use miniz:
 	// https://github.com/richgel999/miniz )
+	mz_bool status;
 	mz_zip_archive zip_archive;
 	memset(&zip_archive, 0, sizeof(zip_archive));
-	status = mz_zip_reader_init_file(&zip_archive, "__oscTempzip__.zip", 0);
+	status = mz_zip_reader_init_file(&zip_archive, "/openshopchannel/temp.zip", 0);
+	if (!status) {
+		sprintf(errorMessage, "Could not initialize zip extraction.");
+		sprintf(errorCode, "ZIP_OPEN_FAILED");
+		errorMesageLoop("Extract failed");
+	}
 	int i;
 	int imax = mz_zip_reader_get_num_files(&zip_archive);
 	char * fullpath = memalign(32,1024);
@@ -420,20 +426,31 @@ int main(int argc, char **argv) {
 		mz_zip_reader_file_stat(&zip_archive, i, &file_stat);
 		sprintf(fullpath, "/%s", file_stat.m_filename);
 		if (mz_zip_reader_is_file_a_directory(&zip_archive, i)) {
-			mkdir(fullpath, 0777);
+			if (fullpath[strlen(fullpath)-1] == '/') {
+				fullpath[strlen(fullpath)-1] = 0x00;
+			}
+			if (mkdir(fullpath, 0777) < 0 && errno != EEXIST) {
+				sprintf(errorMessage, "Could not create directory on SD card.");
+				sprintf(errorCode, "ZIP_EXTRACT_FAILED");
+				errorMesageLoop("Extract failed");
+			}
 		} else {
-			mz_zip_reader_extract_to_file(&zip_archive, i, fullpath, 0);
+			if (mz_zip_reader_extract_to_file(&zip_archive, i, fullpath, 0) < 0) {
+				sprintf(errorMessage, "Could extract file to SD card.");
+				sprintf(errorCode, "ZIP_EXTRACT_FAILED");
+				errorMesageLoop(fullpath);
+			}
 		}
 
 		// Render progress bar as unzipping proceeds
-		renderMainScreen("Install", "Install Progress");
+		renderMainScreen("Install", fullpath);
 		GRRLIB_Rectangle(132, 272, ((float)(i+1)/(float)imax) * 377.0f, 34, 0x35BEECFF, true);
 		GRRLIB_Render();
 	}
 	mz_zip_reader_end(&zip_archive);
 
-	// Delete __oscTempzip__.zip from SD card
-	remove("__oscTempzip__.zip");
+	// Delete /openshopchannel/temp.zip from SD card
+	remove("/openshopchannel/temp.zip");
 
 	// Fade out & exit to shop channel with "SUCCESS" error code
 	fadeOut();
