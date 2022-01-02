@@ -39,6 +39,7 @@ LIBS	:= -lgrrlib -lfreetype -lbz2 -lpngu -lpng -ljpeg -lz -lfat
 LIBS	+= -lwiiuse
 #LIBS	+= -lmodplay -laesnd
 LIBS	+= -lbte -logc -lm
+LIBS	+= -lcurl -lwiisocket -lmbedtls -lmbedcrypto -lmbedx509
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing

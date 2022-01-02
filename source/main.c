@@ -22,14 +22,15 @@
 // libOGC-related headers 
 #include <gccore.h>			// Thank you libOGC & devkitPRO!
 							// https://github.com/devkitPro/libogc
-#include <network.h>
 #include <fat.h>
 #include <wiiuse/wpad.h>
 
+// oooo headers for network stuff
+#include <wiisocket.h>
+#include <curl/curl.h>
+
 // Custom headers
 #include "miniz.h"
-#include "nethelpers.h"		// See nethelpers.c and nethelpers.h for code regarding
-							// downloading the ZIP from the web server
 
 // Fonts and images
 #include "LiberationSans-Regular_ttf.h"
@@ -54,25 +55,6 @@ char * errorCode;			// Stores error code given by functions that fail.
 							// shop channel.
 
 char * downloadURL;			// Stores the URL of the ZIP to download
-
-char * downloadHostname;	// Stores the hostname of the server to download the
-							// ZIP from, which is extracted from downloadURL
-
-char * downloadPath;		// Stores the path of the ZIP file to download on the
-							// web server
-
-							// Given a downloadURL,
-							// http://example.com/dir/example.zip ,
-							// the variables, downloadURL,
-							// downloadHostname, and downloadPath will be set as
-							// "http://example.com/dir/example.zip", "example.com",
-							// and "/dir/example.zip", respectively.
-
-u32 fileSize = 0;			// Stores the total size, in bytes, of the ZIP to be
-							// downloaded.
-
-u32 fileBytesSaved = 0;		// Stores the portion, in bytes, of the ZIP that
-							// has been saved so far.
 
 /*
  *
@@ -136,48 +118,6 @@ char * getPackageURL() {
 
 /*
  *
- *	URL parsing
- *
- */
-
-// getRequestPath(url)
-//
-// This function extracts a request path from a given URL.
-//
-// For example, given the following URL:
-// http://example.com/dir/example.zip
-// This function will return the following path:
-// /dir/example.zip
-
-char * getRequestPath(char * url) {
-	char * removedPrefix = strstr(url, "//") + 2;
-	char * removedHostname = strstr(removedPrefix, "/");
-	return removedHostname;
-}
-
-// getHostname(url)
-//
-// This function extracts a hostname from a given URL.
-//
-// For example, given the following URL:
-// http://example.com/dir/example.zip
-// This function will return the following hostname:
-// example.com
-
-char * getHostname(char * url) {
-	char * removedPrefix = strstr(url, "//") + 2;
-	char * hostname = memalign(32, 255);
-	bzero(hostname, 255);
-	int i = 0;
-	while (removedPrefix[i] != '/') {
-		hostname[i] = removedPrefix[i];
-		i++;
-	}
-	return hostname;
-}
-
-/*
- *
  *	Drawing
  *
  */
@@ -217,7 +157,7 @@ void renderMainScreen(char * title, char * boxcaption) {
 // in the shop channel and when the download actually starts. Or, just call
 // errorMessageLoop and compile yourself.
 
-void errorMesageLoop(char * title) {
+void errorMessageLoop(char * title) {
 	char * returnUrl = memalign(32, 512);
 	sprintf(returnUrl, "/error?error=%s", errorCode);
 	while (1) {
@@ -233,6 +173,20 @@ void errorMesageLoop(char * title) {
 		}
 		VIDEO_WaitVSync();
 	}
+}
+
+// drawProgressBar()
+//
+// This function is called frequently by libcurl while the file is downloading
+// and will draw the progress bar and text.
+
+int drawProgressBar(void *data, curl_off_t fileSize, curl_off_t fileSaved, curl_off_t ultotal, curl_off_t ulnow) {
+	char * downloadProgress = (char *)data;
+	sprintf(downloadProgress, "Downloading (%lld/%lld)", fileSaved, fileSize);
+	renderMainScreen("Download", downloadProgress);
+	GRRLIB_Rectangle(132, 272, ((float)fileSaved/(float)fileSize) * 377.0f, 34, 0x35BEECFF, true);
+	GRRLIB_Render();
+	return 0;
 }
 
 // fadeIn()
@@ -284,8 +238,7 @@ void fadeOut() {
 // Upon failure, this function will return -1.
 
 s32 initSystems() {
-
-	s32 netInitResult = net_init();
+	s32 netInitResult = wiisocket_init();
 	if (netInitResult < 0) {
 		sprintf(errorMessage, "Could not initialize network (%d).", netInitResult);
 		sprintf(errorCode, "NET_INIT_FAILED");
@@ -316,7 +269,6 @@ s32 initSystems() {
  */
 
 int main(int argc, char **argv) {
-
 	// The odd-looking order of the following code, up until VIDEO_SetBlack(false),
 	// is necessary to prevent graphical irregularities from appearing while
 	// the program starts.
@@ -348,33 +300,17 @@ int main(int argc, char **argv) {
 
 	// Throw error if any system failed to initialize
 	if (initRes < 0) {
-		errorMesageLoop("Initialization failed");
+		errorMessageLoop("Initialization failed");
 	}
 
 	// Get URL of ZIP from nwc24dl.bin
 	downloadURL = getPackageURL();
 	if (downloadURL == NULL) {
-		errorMesageLoop("Initialization failed");
+		errorMessageLoop("Initialization failed");
 	}
 
-	// Get hostname & request path from extracted URL
-	downloadHostname = getHostname(downloadURL);
-	downloadPath = getRequestPath(downloadURL);
-
-	// Attempt to resolve hostname & establish socket connection with server
-	s32 sock = connectByHostname(downloadHostname);
-	if (sock < 0) {
-		errorMesageLoop("Download failed");
-	}
-
-	// Get file size of target ZIP
-	s32 lenRes = getRemoteFileSize(sock, downloadHostname, downloadPath);
-	if (lenRes < 0) {
-		errorMesageLoop("Download failed");
-	}
-
-	// Set fileSize to returned value of getRemoteFileSize
-	fileSize = lenRes;
+	// fopen won't create the directory for us and will fail if it doesn't exist
+	mkdir("/openshopchannel", 0777);
 
 	// Open/create /openshopchannel/temp.zip at the SD card root for writing
 	FILE * f = fopen("/openshopchannel/temp.zip", "wb");
@@ -384,23 +320,43 @@ int main(int argc, char **argv) {
 		// is only for one line of code (fopen).
 		sprintf(errorMessage, "Could not open file for saving (%d).", errno);
 		sprintf(errorCode, "ZIP_OPEN_FAILED");
-		errorMesageLoop("Download failed");
+		errorMessageLoop("Download failed");
 	}
 
-	// Download + save file in chunks, updating progress bar
 	char * downloadProgress = memalign(32,255);
-	while (fileBytesSaved < fileSize) {
-		s32 saveRes = saveResponseChunk(sock, f);
-		if (saveRes < 0) {
-			fclose(f);
-			errorMesageLoop("Download failed");
-		}
-		sprintf(downloadProgress, "Downloading (%d/%d)", fileBytesSaved, fileSize);
-		renderMainScreen("Download", downloadProgress);
-		GRRLIB_Rectangle(132, 272, ((float)fileBytesSaved/(float)fileSize) * 377.0f, 34, 0x35BEECFF, true);
-		GRRLIB_Render();
+	if (downloadProgress == NULL) {
+		sprintf(errorMessage, "Failed to allocate memory.");
+		sprintf(errorCode, "MEM_ALLOC_FAILED");
+		errorMessageLoop("memory allocation failed");
 	}
-	free(downloadProgress);
+
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+
+	CURL * curlHandle = curl_easy_init();
+	if (curlHandle == NULL) {
+		sprintf(errorMessage, "Could not initialize curl.");
+		sprintf(errorCode, "CURL_INIT_FAILED");
+		errorMessageLoop("curl initialization failed");
+	}
+
+	curl_easy_setopt(curlHandle, CURLOPT_URL, downloadURL);
+	curl_easy_setopt(curlHandle, CURLOPT_USERAGENT, "OSCDownloader/1.0");
+	curl_easy_setopt(curlHandle, CURLOPT_WRITEFUNCTION, fwrite);
+	curl_easy_setopt(curlHandle, CURLOPT_WRITEDATA, f);
+	curl_easy_setopt(curlHandle, CURLOPT_XFERINFOFUNCTION, drawProgressBar);
+	curl_easy_setopt(curlHandle, CURLOPT_XFERINFODATA, &downloadProgress);
+	curl_easy_setopt(curlHandle, CURLOPT_NOPROGRESS, 0L);
+
+	CURLcode curlHandleRes = curl_easy_perform(curlHandle);
+	if (curlHandleRes != CURLE_OK) {
+		sprintf(errorMessage, "Failed to download file (%d).", curlHandleRes);
+		sprintf(errorCode, "FILE_DL_FAILED");
+		errorMessageLoop("Download failed");
+	}
+
+	// This already frees downloadProgress for us
+	curl_easy_cleanup(curlHandle);
+	curl_global_cleanup();
 
 	// Close file handler for /openshopchannel/temp.zip
 	fclose(f);
@@ -415,7 +371,7 @@ int main(int argc, char **argv) {
 	if (!status) {
 		sprintf(errorMessage, "Could not initialize zip extraction.");
 		sprintf(errorCode, "ZIP_OPEN_FAILED");
-		errorMesageLoop("Extract failed");
+		errorMessageLoop("Extract failed");
 	}
 	int i;
 	int imax = mz_zip_reader_get_num_files(&zip_archive);
@@ -432,13 +388,13 @@ int main(int argc, char **argv) {
 			if (mkdir(fullpath, 0777) < 0 && errno != EEXIST) {
 				sprintf(errorMessage, "Could not create directory on SD card.");
 				sprintf(errorCode, "ZIP_EXTRACT_FAILED");
-				errorMesageLoop("Extract failed");
+				errorMessageLoop("Extract failed");
 			}
 		} else {
 			if (mz_zip_reader_extract_to_file(&zip_archive, i, fullpath, 0) < 0) {
 				sprintf(errorMessage, "Could extract file to SD card.");
 				sprintf(errorCode, "ZIP_EXTRACT_FAILED");
-				errorMesageLoop(fullpath);
+				errorMessageLoop(fullpath);
 			}
 		}
 
