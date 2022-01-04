@@ -30,6 +30,7 @@
 #include <curl/curl.h>
 
 // Custom headers
+#include "ec_cfg.h"
 #include "main.h"
 #include "miniz.h"
 #include "utils.h"
@@ -59,55 +60,25 @@ char * downloadURL;
 
 // getPackageURL()
 //
-// This function extracts a URL from the file /shared2/wc24/nwc24dl.bin.
+// This function extracts a URL from the loaded ec.cfg.
 //
 // The shop channel web interface is able to invoke a JS function,
-// addDownloadTask(urlstring), which writes a given string to the that file.
-// This function is part of the WC24 JS interface.
+// ec.setPersistentValue(name, value), which writes a given key/value pair to the that file.
+// This function is part of the ECommerceInterface JS interface.
+// The frontend is expected to set the key "downloadUrl" to a valid URL.
 //
-// To prevent the console from accidentally interpreting the URL as a valid
-// WC24 URL, the URL is prefixed with the string "http://!|". For more information
-// on the workings of WC24, see https://wiibrew.org/wiki/WiiConnect24
-//
-// The following function reads nwc24dl.bin into a buffer, iterates through each
-// byte of the buffer, and searches for the "http://!|" 'magic phrase'. Upon finding
-// the magic phrase, it will return the URL that follows it.
-//
-// For example, if the following string is found in nwc24.dl:
-// http://!|http://example.com/example.zip
-// The following URL will be returned:
-// http://example.com/example.zip
+// If the key is not present, or another error occurs, this function will return NULL.
+// Otherwise, it returns the given value for the key "downloadUrl".
 char * getPackageURL() {
-	char *packageURL = memalign(32, 236);
-	char *magicPhrase = "http://!|";
-
-	u32 length = 0;
-	void* nwc24dlBuffer = ISFS_GetFile("/shared2/wc24/nwc24dl.bin", &length);
-	if (nwc24dlBuffer == NULL) {
-		// An error message is already present via ISFS_GetFile.
-		return NULL;
-	}
-
-	if (length != 63488) {
-		sprintf(errorMessage, "Invalid size of nwc24dl.bin.");
-		sprintf(errorCode, "ISFS_OPEN_FAILED");
-	}
-
-	int i;
-	for (i = 0; i < 63488; i = i + 1) {
-		if (memcmp(nwc24dlBuffer+i, magicPhrase, 9) == 0) {
-			memcpy(packageURL, nwc24dlBuffer+i+9, strlen(nwc24dlBuffer+i+9) + 1);
-			break;
-		} 
-	}
-	if (i >= 63487) {
+	char* result = ecGetKeyValue("downloadUrl");
+	
+	if (result == NULL) {
 		sprintf(errorMessage, "No download URL present.");
 		sprintf(errorCode, "NO_URL_IN_BIN");
 		return NULL;
+	} else {
+		return result;
 	}
-
-	free(nwc24dlBuffer);
-	return packageURL;
 }
 
 /*
@@ -227,7 +198,7 @@ void fadeOut() {
 // initSystems()
 //
 // This function attempts to initialize the socket (network), FAT (SD card), and
-// ISFS (NAND) subsystems.
+// ISFS (NAND) subsystems. It then loads ec.cfg for later usage.
 //
 // Upon failure, this function will return -1.
 
@@ -250,6 +221,12 @@ s32 initSystems() {
 	if (ISFSInitResult < 0) {
 		sprintf(errorMessage, "Could not access NAND (%d).", ISFSInitResult);
 		sprintf(errorCode, "NAND_INIT_FAILED");
+		return -1;
+	}
+
+	s32 ecLoadResult = ecInitCfg();
+	if (ecLoadResult < 0) {
+		// An error message and code is already set upon failure.
 		return -1;
 	}
 
@@ -297,7 +274,7 @@ int main(int argc, char **argv) {
 		errorMessageLoop("Initialization failed");
 	}
 
-	// Get URL of ZIP from nwc24dl.bin
+	// Get URL of ZIP from ec.cfg
 	downloadURL = getPackageURL();
 	if (downloadURL == NULL) {
 		errorMessageLoop("Initialization failed");
