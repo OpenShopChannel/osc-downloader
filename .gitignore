@@ -1,14 +1,3 @@
-
-build/LiberationSans-Regular.ttf.o
-build/LiberationSans-Regular_ttf.h
-build/main.d
-build/main.o
-build/miniz.d
-build/miniz.o
-build/nethelpers.d
-build/nethelpers.o
-build/osc-downloader.elf.map
-build/osc.png.o
-build/osc_png.h
+build/
 osc-downloader.dol
 osc-downloader.elf

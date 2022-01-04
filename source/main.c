@@ -30,7 +30,9 @@
 #include <curl/curl.h>
 
 // Custom headers
+#include "main.h"
 #include "miniz.h"
+#include "utils.h"
 
 // Fonts and images
 #include "LiberationSans-Regular_ttf.h"
@@ -44,17 +46,10 @@ GRRLIB_texImg *osclogo;
  *
  */
 
-char * errorMessage;		// Stores error messages given by functions that fail
-
-char * errorCode;			// Stores error code given by functions that fail.
-							// Error codes are set as a HTTP GET parameter when
-							// returning to the shop channel. E.g., the error
-							// code "DNS_FAILED" set by connectByHostname in
-							// nethelpers.c is used in the path
-							// "/error?error=DNS_FALIED" when returning to the
-							// shop channel.
-
-char * downloadURL;			// Stores the URL of the ZIP to download
+// See main.h for an explanation of their purpose.
+char * errorMessage;
+char * errorCode;
+char * downloadURL;
 
 /*
  *
@@ -64,7 +59,7 @@ char * downloadURL;			// Stores the URL of the ZIP to download
 
 // getPackageURL()
 //
-// This function extracts a URL from the file /shared2/wc24/nwc24dl.bin .
+// This function extracts a URL from the file /shared2/wc24/nwc24dl.bin.
 //
 // The shop channel web interface is able to invoke a JS function,
 // addDownloadTask(urlstring), which writes a given string to the that file.
@@ -82,20 +77,21 @@ char * downloadURL;			// Stores the URL of the ZIP to download
 // http://!|http://example.com/example.zip
 // The following URL will be returned:
 // http://example.com/example.zip
-
 char * getPackageURL() {
-	char *nwc24dlBuffer = memalign(32, 63488);
 	char *packageURL = memalign(32, 236);
 	char *magicPhrase = "http://!|";
 
-	s32 file = ISFS_Open("/shared2/wc24/nwc24dl.bin", ISFS_OPEN_READ);
-	if (file < 0) {
-		sprintf(errorMessage, "Could not access nwc24dl.bin.");
-		sprintf(errorCode, "ISFS_OPEN_FAILED");
+	u32 length = 0;
+	void* nwc24dlBuffer = ISFS_GetFile("/shared2/wc24/nwc24dl.bin", &length);
+	if (nwc24dlBuffer == NULL) {
+		// An error message is already present via ISFS_GetFile.
 		return NULL;
 	}
 
-	ISFS_Read(file, nwc24dlBuffer, 63488);
+	if (length != 63488) {
+		sprintf(errorMessage, "Invalid size of nwc24dl.bin.");
+		sprintf(errorCode, "ISFS_OPEN_FAILED");
+	}
 
 	int i;
 	for (i = 0; i < 63488; i = i + 1) {
@@ -110,9 +106,7 @@ char * getPackageURL() {
 		return NULL;
 	}
 
-	ISFS_Close(file);
 	free(nwc24dlBuffer);
-
 	return packageURL;
 }
 
