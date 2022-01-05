@@ -48,7 +48,7 @@ void *ISFS_GetFile(const char *path, u32 *size) {
   void* buf = aligned_alloc(32, aligned_length);
 	if (buf == NULL) {
 		sprintf(errorMessage, "Could not allocate buffer (%d).", errno);
-		sprintf(errorCode, "ISFS_OPEN_FAILED");
+		sprintf(errorCode, "MEM_ALLOC_FAILED");
 		
 		ISFS_Close(fd);
 		return NULL;

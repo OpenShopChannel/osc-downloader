@@ -18,3 +18,7 @@ extern char * errorCode;
 
 // Stores the URL of the ZIP to download
 extern char * downloadURL;
+
+// Helpers for manipulating title IDs.
+#define TITLE_UPPER(x) ((u32)((x) >> 32))
+#define TITLE_LOWER(x) ((u32)(x)&0xFFFFFFFF)
