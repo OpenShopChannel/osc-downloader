@@ -79,3 +79,68 @@ void *ISFS_GetFile(const char *path, u32 *size) {
   ISFS_Close(fd);
   return buf;
 }
+
+// Writes a file at the given path.
+// Returns false on failure, updating errorMessage/errorCode appropiately.
+bool ISFS_WriteFile(const char *path, void* fileContents, int contentsLength) {
+	// Attempt to open a handle to our file.
+  s32 fd = ISFS_Open(path, ISFS_OPEN_WRITE);
+  if (fd < 0) {
+		sprintf(errorMessage, "Could not open file (%d).", fd);
+		sprintf(errorCode, "ISFS_WRITE_FAILED");
+		return false;
+  }
+
+	s32 ret = ISFS_Write(fd, fileContents, contentsLength);
+	if (ret < 0) {
+		sprintf(errorMessage, "Could not write file (%d).", ret);
+		sprintf(errorCode, "ISFS_WRITE_FAILED");
+		return false;
+	}
+
+	ISFS_Close(fd);
+	return true;
+}
+
+// Deletes a file at the given path and recreates it using the same permissions as the original.
+// Returns false on failure, updating errorMessage/errorCode appropiately.
+bool RecreateFile(const char *path) {
+	// Obtain the file's original attributes.
+	// These variable names are derived from ISFS_GetAttr's declaration.
+	u32 ownerId = 0;
+	u16 groupId = 0;
+	u8 attributes, ownerperm, groupperm, otherperm = 0;
+
+	s32 ret = ISFS_GetAttr(path, &ownerId, &groupId, &attributes, &ownerperm, &groupperm, &otherperm);
+	if (ret < 0) {
+		sprintf(errorMessage, "Could not obtain file permissions (%d).", ret);
+		sprintf(errorCode, "FILE_RECREATE_FAILED");
+		return false;
+	}
+
+	// Delete the original file.
+	ret = ISFS_Delete(path);
+	if (ret < 0) {
+		sprintf(errorMessage, "Could not delete file (%d).", ret);
+		sprintf(errorCode, "FILE_RECREATE_FAILED");
+		return false;
+	}
+
+	// Recreate.
+	ret = ISFS_CreateFile(path, attributes, ownerperm, groupperm, otherperm);
+	if (ret < 0) {
+		sprintf(errorMessage, "Could not create file (%d).", ret);
+		sprintf(errorCode, "FILE_RECREATE_FAILED");
+		return false;
+	}
+
+	// Restore previous attributes.
+	ret = ISFS_SetAttr(path, ownerId, groupId, attributes, ownerperm, groupperm, otherperm);
+	if (ret < 0) {
+		sprintf(errorMessage, "Could not set attributes (%d).", ret);
+		sprintf(errorCode, "FILE_RECREATE_FAILED");
+		return false;
+	}
+
+	return true;
+}

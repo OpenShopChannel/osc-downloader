@@ -25,10 +25,6 @@
 #include <fat.h>
 #include <wiiuse/wpad.h>
 
-// oooo headers for network stuff
-#include <wiisocket.h>
-#include <curl/curl.h>
-
 // Custom headers
 #include "ec_cfg.h"
 #include "main.h"
@@ -51,6 +47,8 @@ GRRLIB_texImg *osclogo;
 char * errorMessage;
 char * errorCode;
 char * downloadURL;
+
+u8 EMPTY_SHA1_HASH[20] = {0xda, 0x39, 0xa3, 0xee, 0x5e, 0x6b, 0x4b, 0x0d, 0x32, 0x55, 0xbf, 0xef, 0x95, 0x60, 0x18, 0x90, 0xaf, 0xd8, 0x07, 0x09};
 
 /*
  *
@@ -157,7 +155,7 @@ void fadeIn() {
 	int opacity = 0;
 	int speed = 8; 
 	for (opacity = 0; opacity <= 255; opacity = opacity + speed) {
-		renderMainScreen("Download", "Downloading");
+		renderMainScreen("Extract", "Extracting");
 		GRRLIB_Rectangle(0, 0, 640, 480, RGBA(0,0,0,0xFF - opacity), true);
 		GRRLIB_Render();
 	}
@@ -195,13 +193,6 @@ void fadeOut() {
 // Upon failure, this function will return -1.
 
 s32 initSystems() {
-	s32 netInitResult = wiisocket_init();
-	if (netInitResult < 0) {
-		sprintf(errorMessage, "Could not initialize network (%d).", netInitResult);
-		sprintf(errorCode, "NET_INIT_FAILED");
-		return -1;
-	}
-
 	bool fatInitResult = fatInitDefault();
 	if (!fatInitResult) {
 		sprintf(errorMessage, "Could not access SD card.");
@@ -223,6 +214,63 @@ s32 initSystems() {
 	}
 
 	return 0;
+}
+
+// getTitleContentPath returns a path to a content for the given title ID.
+// You may wish to free its result after usage ends.
+char* getTitleContentPath(u64 titleId, u32 contentId) {
+	// 46 is the length of "/title/xxxxxxxx/yyyyyyyy/content/zzzzzzzz.app", plus a terminating null byte.
+	char* path = malloc(46);
+	snprintf(path, 46, "/title/%08x/%08x/content/%08x.app", TITLE_UPPER(titleId), TITLE_LOWER(titleId), contentId);
+	return path;
+}
+
+// nullifyTitle edits a TMD to have its zeroth index an empty hash.
+// It then writes an empty file to NAND for its zeroth content.
+bool nullifyTitle(u64 titleId) {
+	// /title/%08x/%08x/content/title.tmd, plus a null terminator.
+	char tmdPath[43] = "";
+
+	// Read the TMD we are manipulating.
+	u32 tmdSize = 0;
+  sprintf(tmdPath, "/title/%08x/%08x/content/title.tmd", TITLE_UPPER(titleId), TITLE_LOWER(titleId));
+  void *tmdbuf = ISFS_GetFile(tmdPath, &tmdSize);
+  if (tmdbuf == NULL) {
+		// An error message and code is already set upon failure.
+		return false;
+  }
+
+	// A TMD with one content is 520 bytes. We should not modify it otherwise.
+	if (tmdSize != 520) {
+		sprintf(errorMessage, "Modified TMD (length %d).", tmdSize);
+		sprintf(errorCode, "TITLE_CLEANUP_FAILED");
+		return false;
+	}
+
+	// We only wish to access the TMD. Read over the signature.
+	signed_blob *signedTmd = (signed_blob *)tmdbuf;
+  tmd *titleTmd = SIGNATURE_PAYLOAD(signedTmd);
+	
+	// We wish to overwrite the first content with a null hash.
+	// It should should be the only content.
+	// This is the SHA-1 of an empty file.
+	titleTmd->contents[0].size = 0;
+	memcpy(titleTmd->contents[0].hash, EMPTY_SHA1_HASH, 20);
+
+	// Open and overwrite our TMD with the given contents.
+	bool success = ISFS_WriteFile(tmdPath, signedTmd, tmdSize);
+	if (!success) {
+		return false;
+	}
+
+	// Open and overwrite our primary content with nothing, nullifying.
+	char* contentPath = getTitleContentPath(titleId, 0);
+	success = RecreateFile(contentPath);
+	if (!success) {
+		return false;
+	}
+
+	return true;
 }
 
 /*
@@ -273,14 +321,13 @@ int main(int argc, char **argv) {
 		errorMessageLoop("Reading title failed");
 	}
 
-	// Determine NAND path
-	// 46 is the length of "/title/xxxxxxxx/yyyyyyyy/content/zzzzzzzz.app" plus a terminating null byte.
-	char path[46] = "";
-	sprintf(path, "/title/%08x/%08x/content/00000000.app", TITLE_UPPER(titleId), TITLE_LOWER(titleId));
 
 	// Read NAND contents
+	// Our NAND content is both index and ID 0.
+	// We read at index 0.
+	char* path = getTitleContentPath(titleId, 0);
 	u32 zip_length = 0;
-  void* zip_data = ISFS_GetFile("/title/00010008/53504f54/content/00000000.app", &zip_length);
+  void* zip_data = ISFS_GetFile(path, &zip_length);
 	if (zip_data == NULL) {
 		// An error message is set via ISFS_GetFile.
 		errorMessageLoop("Reading title failed");
@@ -330,8 +377,15 @@ int main(int argc, char **argv) {
 	}
 	mz_zip_reader_end(&zip_archive);
 
-	// Delete /openshopchannel/temp.zip from SD card
-	remove("/openshopchannel/temp.zip");
+	// Nullify the contents of our hidden SD title.
+	// We do so in order to not clog up the user's available NAND space.
+	renderMainScreen("Cleanup", "Cleaning up");
+	GRRLIB_Render();
+	success = nullifyTitle(titleId);
+	if (!success) {
+		// An error message is set via ISFS_GetFile.
+		errorMessageLoop("Cleanup failed");
+	}
 
 	// Fade out & exit to shop channel with "SUCCESS" error code
 	fadeOut();
