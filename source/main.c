@@ -24,6 +24,7 @@
 							// https://github.com/devkitPro/libogc
 #include <fat.h>
 #include <wiiuse/wpad.h>
+#include <sdcard/wiisd_io.h> 
 
 // Custom headers
 #include "ec_cfg.h"
@@ -42,6 +43,10 @@ GRRLIB_texImg *osclogo;
  *	Global Variables
  *
  */
+
+// For the IO
+const DISC_INTERFACE *sd_slot = &__io_wiisd;
+const DISC_INTERFACE *usb = &__io_usbstorage;
 
 // See main.h for an explanation of their purpose.
 char * errorMessage;
@@ -193,12 +198,31 @@ void fadeOut() {
 // Upon failure, this function will return -1.
 
 s32 initSystems() {
-	bool fatInitResult = fatInitDefault();
-	if (!fatInitResult) {
-		sprintf(errorMessage, "Could not access SD card.");
-		sprintf(errorCode, "FAT_INIT_FAILED");
-		return -1;
-	}
+        // Initialize IO
+        usb->startup();
+        sd_slot->startup();
+
+        // Check if the SD Card is inserted
+        bool isInserted = __io_wiisd.isInserted();
+
+        // Try to mount the SD Card before the USB
+        if (isInserted) {
+                fatMountSimple("fat", sd_slot);
+        } else {
+                // Since the SD Card is not inserted, we will attempt to mount the USB.
+                bool USB = __io_usbstorage.isInserted();
+                if (USB) {
+                        fatMountSimple("fat", usb);
+                } else {
+                        // No input devices were inserted OR it failed to mount either
+                        // device.
+                        sprintf(errorMessage, "Please insert either an SD Card or USB.");
+                        sprintf(errorCode, "FAT_INIT_FAILED");
+                        __io_usbstorage.shutdown();
+                        __io_wiisd.shutdown();
+                        return -1;
+                }
+        }
 
 	s32 ISFSInitResult = ISFS_Initialize();
 	if (ISFSInitResult < 0) {
@@ -289,6 +313,7 @@ int main(int argc, char **argv) {
 	GRRLIB_SetBackgroundColour(0xff, 0xff, 0xff, 0xff);
 	VIDEO_SetBlack(true);
 	GRRLIB_Render();
+        WPAD_Init();
 
 	// Load font and logo
 	libSans = GRRLIB_LoadTTF(LiberationSans_Regular_ttf, LiberationSans_Regular_ttf_size);
@@ -352,7 +377,7 @@ int main(int argc, char **argv) {
 		bzero(fullpath, 1024);
 		mz_zip_archive_file_stat file_stat;
 		mz_zip_reader_file_stat(&zip_archive, i, &file_stat);
-		sprintf(fullpath, "/%s", file_stat.m_filename);
+		sprintf(fullpath, "fat:/%s", file_stat.m_filename);
 		if (mz_zip_reader_is_file_a_directory(&zip_archive, i)) {
 			if (fullpath[strlen(fullpath)-1] == '/') {
 				fullpath[strlen(fullpath)-1] = 0x00;
@@ -392,6 +417,11 @@ int main(int argc, char **argv) {
 	GRRLIB_Exit();
 	WII_Initialize();
 	WII_LaunchTitleWithArgs(0x0001000248414241LL, 0,"/error?error=SUCCESS", NULL); 
+        
+        // Unmount fat and deinit IO
+        fatUnmount("fat:/");
+        __io_usbstorage.shutdown();
+        __io_wiisd.shutdown();
 
 	// In case hell freezes over, exit to loader
 	exit(0);
